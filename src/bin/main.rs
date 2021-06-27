@@ -1,11 +1,12 @@
 
-mod pt_ctrl;
 use clap::{App, Arg};
-use pt_ctrl::{get_pt_handle, close_pt_handle, setup_pt_no_pmi};
+//use crate::pt_ctrl::{get_pt_handle, close_pt_handle, setup_pt_no_pmi, setup_host_pid};
 use winapi::um::processthreadsapi::GetCurrentProcessId;
-
-use crate::pt_ctrl::setup_host_pid;
-
+use ptkgenerator::pt_ctrl::*;
+fn processor(i:usize, buff:&Vec<u8>)->bool {
+    println!("read at {}", i);
+    true
+}
 fn main() {
     let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
     let matches = App::new("PtkGenerator")
@@ -33,6 +34,6 @@ fn main() {
     let addr0_end = matches.value_of("addr0_end").unwrap().parse().unwrap();
     println!("process {}", p);
     setup_host_pid(handle, p).expect("Set Host Pid Failed");
-    setup_pt_no_pmi(handle, p, buff_size, mtc, psb, cyc, addr0_cfg, addr0_start, addr0_end).expect("Start pt failed");
+    setup_pt_no_pmi(handle, p, buff_size, mtc, psb, cyc, addr0_cfg, addr0_start, addr0_end, &mut processor).expect("Start pt failed");
     close_pt_handle(handle).expect("Close pt handle errord");
 }

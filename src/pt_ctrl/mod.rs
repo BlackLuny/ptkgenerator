@@ -202,23 +202,29 @@ fn fetch_data(buff: *mut u8, buff_len: usize, pos: usize, out_buff:&mut Vec<u8>)
     rst_size
 }
 
-pub fn setup_pt_no_pmi(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32) ->Result<(),u32>
+pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32, processor: &mut F) ->Result<(),u32> where F: FnMut(usize, &Vec<u8>)->bool
 {
     let mut rsp=Default::default();
     setup_pt_no_pmi_start(h, pid, buff_size, mtc_freq, psb_freq, cyc_thld, addr_cfg, addr_start, addr_end, &mut rsp).expect("Setup pt faile");
     // start capture data
     let mut read_pos = vec![0 as usize; rsp.out_buff_num as usize];
     let mut tmp_buff = vec![0; 16 * 1024 * 1024];
-    // loop {
+    let never = false;
+    loop {
         for i in 0..rsp.out_buff_num as usize {
             let pos = read_pos[i];
             let buff = rsp.out_buffer_info[i];
             let len = rsp.out_buffer_len as usize;
             let read_size = fetch_data(buff as *mut u8, len, pos, &mut tmp_buff);
             read_pos[i] = (pos + read_size) % len;
-            println!("read size: {}", read_size);
+            if !processor(i, &tmp_buff) {
+                return Ok(());
+            }
         }
-    // };
+        if never {
+            break;
+        }
+    };
     Ok(())
 }
 
@@ -253,64 +259,4 @@ pub fn close_pt_handle(handle:HANDLE)->Result<(), u32>
             GetLastError()
         })
     }
-}
-
-
-#[test]
-fn test_read_mem()
-{
-    use winapi::um::processthreadsapi::GetCurrentProcessId;
-    let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
-    let pid = unsafe {GetCurrentProcessId()};
-    let tmp_val = 0x11223344u32;
-    let size = size_of::<u32>();
-    let mut out_buff = vec![0;size];
-    let r = read_process_memory_drv(handle, pid, &tmp_val as *const _ as u64, size as u16, &mut out_buff);
-    assert_eq!(r, Ok(()));
-    assert_eq!(out_buff, [0x44, 0x33, 0x22, 0x11]);
-    assert_eq!(close_pt_handle(handle), Ok(()));
-}
-
-#[test]
-fn test_write_mem()
-{
-    use winapi::um::processthreadsapi::GetCurrentProcessId;
-    let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
-    let pid = unsafe {GetCurrentProcessId()};
-    let mut tmp_val = 1u32;
-    let out_buff = vec![0x11,0x22,0x33,0x44];
-    let addr = &tmp_val as *const _ as u64;
-    unsafe {println!("addr = {:X}, {},{},{:?}", addr, *(addr as *const u32), pid, (&out_buff).as_ptr());}
-    let r = write_process_memory_drv(handle, pid, &mut tmp_val as *mut _ as u64, &out_buff);
-    assert_eq!(r, Ok(()));
-    assert_eq!(tmp_val, 0x44332211);
-    assert_eq!(close_pt_handle(handle), Ok(()));
-}
-
-#[test]
-fn test_pt_config_start()
-{
-    use winapi::um::processthreadsapi::GetCurrentProcessId;
-    let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
-    let pid = unsafe {GetCurrentProcessId()};
-    let r = setup_host_pid(handle, pid);
-    assert_eq!(r, Ok(()));
-    let mut rsp:PtSetupRst = Default::default();
-    let r = setup_pt_no_pmi_start(handle, pid, 256, 3,5,1,0,0,0, &mut rsp);
-    assert_eq!(rsp.out_buff_num, 16);
-    assert_eq!(r, Ok(()));
-    assert_eq!(close_pt_handle(handle), Ok(()));
-}
-
-#[test]
-fn test_pt_setup()
-{
-    use winapi::um::processthreadsapi::GetCurrentProcessId;
-    let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
-    let pid = unsafe {GetCurrentProcessId()};
-    let r = setup_host_pid(handle, pid);
-    assert_eq!(r, Ok(()));
-    let r = setup_pt_no_pmi(handle, pid, 256, 3,5,1,0,0,0);
-    assert_eq!(r, Ok(()));
-    assert_eq!(close_pt_handle(handle), Ok(()));
 }
