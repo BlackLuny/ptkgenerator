@@ -4,7 +4,7 @@ use clap::{App, Arg};
 use winapi::um::processthreadsapi::GetCurrentProcessId;
 use ptkgenerator::pt_ctrl::*;
 fn processor(i:usize, buff:&Vec<u8>)->bool {
-    println!("read at {}", i);
+    println!("read processor {}, len = {}", i, buff.len());
     true
 }
 fn main() {

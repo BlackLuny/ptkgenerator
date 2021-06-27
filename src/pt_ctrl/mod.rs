@@ -121,7 +121,7 @@ pub fn write_process_memory_drv(h: HANDLE, pid:u32, address: u64, buff:&Vec<u8>)
     let r = unsafe {
         DeviceIoControl(h, code, read_req_ptr,stru_size as u32, null_mut(), 0,  (&mut rst_len) as *mut u32, null_mut())
     };
-    println!("rst_len = 0x{:?}", (&buff).as_ptr());
+
     if r != 0 {
         Ok(())
     } else {
@@ -197,12 +197,11 @@ fn fetch_data(buff: *mut u8, buff_len: usize, pos: usize, out_buff:&mut Vec<u8>)
             *(buff.add(offset)) = 0xFF;
         };
         rst_size+=1;
-
     }
     rst_size
 }
 
-pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32, processor: &mut F) ->Result<(),u32> where F: FnMut(usize, &Vec<u8>)->bool
+pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32, processor:&mut F) ->Result<(),u32> where F: FnMut(usize, &Vec<u8>)->bool
 {
     let mut rsp=Default::default();
     setup_pt_no_pmi_start(h, pid, buff_size, mtc_freq, psb_freq, cyc_thld, addr_cfg, addr_start, addr_end, &mut rsp).expect("Setup pt faile");
