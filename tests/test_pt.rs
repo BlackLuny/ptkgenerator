@@ -51,11 +51,6 @@ mod test {
         assert_eq!(tmp_val, 0x44332211);
     }
 
-    fn processor(i:usize, buff:&Vec<u8>)->bool {
-        assert_eq!(i, 0);
-        assert_ne!(buff.len(), 0);
-        false
-    }
     #[test]
     fn test_pt_setup()
     {
@@ -65,7 +60,11 @@ mod test {
         let r = setup_host_pid(handle, pid);
         assert_eq!(r, Ok(()));
         let mut flags = [false; 16];
-        let r = setup_pt_no_pmi(handle, pid, 256, 3,5,1,0,0,0, &mut processor);
+        let r = setup_pt_no_pmi(handle, pid, 256, 3,5,1,0,0,0, &mut (|i, v, _| {
+            flags[i] = true;
+            flags.iter().any(|d| *d == false)
+        }));
         assert_eq!(r, Ok(()));
+        assert_eq!(true, flags.iter().all(|d| *d == true));
     }
 }

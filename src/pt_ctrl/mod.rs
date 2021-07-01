@@ -201,13 +201,13 @@ fn fetch_data(buff: *mut u8, buff_len: usize, pos: usize, out_buff:&mut Vec<u8>)
     rst_size
 }
 
-pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32, processor:&mut F) ->Result<(),u32> where F: FnMut(usize, &Vec<u8>)->bool
+pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, psb_freq: u32, cyc_thld:u32, addr_cfg: u32, addr_start: u32, addr_end: u32, processor:&mut F) ->Result<(),u32> where F: FnMut(usize, &Vec<u8>, usize)->bool
 {
     let mut rsp=Default::default();
     setup_pt_no_pmi_start(h, pid, buff_size, mtc_freq, psb_freq, cyc_thld, addr_cfg, addr_start, addr_end, &mut rsp).expect("Setup pt faile");
     // start capture data
     let mut read_pos = vec![0 as usize; rsp.out_buff_num as usize];
-    let mut tmp_buff = vec![0; 16 * 1024 * 1024];
+    let mut tmp_buff = vec![0; 1024*800];
     let never = false;
     loop {
         for i in 0..rsp.out_buff_num as usize {
@@ -216,7 +216,7 @@ pub fn setup_pt_no_pmi<F>(h: HANDLE, pid: u32, buff_size: u32, mtc_freq: u32, ps
             let len = rsp.out_buffer_len as usize;
             let read_size = fetch_data(buff as *mut u8, len, pos, &mut tmp_buff);
             read_pos[i] = (pos + read_size) % len;
-            if !processor(i, &tmp_buff) {
+            if !processor(i, &tmp_buff, read_size) {
                 return Ok(());
             }
         }
