@@ -7,6 +7,7 @@
     pub struct DataWriter {
         tx: mpsc::Sender<Vec<u8>>,
         pub file_name:String,
+        pub dir:String,
         pub write_size:usize,
     }
     fn create_async_writer(rt: &Runtime, file_name: &str) -> mpsc::Sender<Vec<u8>>
@@ -32,7 +33,7 @@
     impl DataWriter {
         pub fn new(rt: &Runtime, idx:u32, dir:&str, suffix:&'static str) ->DataWriter {
             let name = get_file_name(idx, dir, suffix);
-            DataWriter {tx: create_async_writer(rt, &name), file_name: name, write_size: 0}
+            DataWriter {tx: create_async_writer(rt, &name), file_name: name, write_size: 0, dir: dir.to_owned()}
         }
 
         pub fn write(&mut self, data:&Vec<u8>, len:usize) {
