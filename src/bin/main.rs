@@ -1,13 +1,44 @@
 
 use clap::{App, Arg};
-//use crate::pt_ctrl::{get_pt_handle, close_pt_handle, setup_pt_no_pmi, setup_host_pid};
-use winapi::um::processthreadsapi::GetCurrentProcessId;
 use ptkgenerator::pt_ctrl::*;
 use sysinfo::{ProcessExt, System, SystemExt, get_current_pid};
+use ptkgenerator::process_util::DataWriter;
+use tokio::runtime::{self, Runtime};
+
+static mut RT: Option<Box<Runtime>> = None;
+static mut WT:Option<Box<Vec<DataWriter>>> = None;
 
 fn processor(i:usize, buff:&Vec<u8>, size: usize)->bool {
-    println!("read processor {}, len = {} data_size = {:?}", i, buff.len(), size);
+    unsafe {
+        if let Some(wt )= &WT {
+            let wt = &wt[i];
+            wt.write(buff, size);
+        }
+    }
     true
+}
+
+
+
+fn create_env()
+{
+    let s = System::new();
+    let cpu_nums = s.get_processors().len();
+    println!("cpu_nums = {:?}", cpu_nums);
+    unsafe {
+        RT = Some(Box::new(runtime::Builder::new_multi_thread().enable_all().build().unwrap()));
+    }
+
+    unsafe {
+        if let Some(rt) = &RT {
+            WT = Some(Box::new(Vec::new()));
+            if let Some(r_wt) = &mut WT {
+                for i in 0..cpu_nums {
+                    r_wt.push(DataWriter::new(&rt, i as u32, "x:", "tmp"))
+                }
+            }
+        }
+    }
 }
 fn main() {
     let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
@@ -36,6 +67,8 @@ fn main() {
     let p = s.get_process_by_name(proc_name)[0].pid();
     let cur_pid = get_current_pid().unwrap();
     setup_host_pid(handle, cur_pid as u32).expect("Set Host Pid Failed");
+    create_env();
+    println!("start capturing ...");
     setup_pt_no_pmi(handle, p as u32, buff_size, mtc, psb, cyc, addr0_cfg, addr0_start, addr0_end, &mut processor).expect("Start pt failed");
     close_pt_handle(handle).expect("Close pt handle errord");
 }
