@@ -6,13 +6,25 @@ use ptkgenerator::file_writer::DataWriter;
 use tokio::runtime::{self, Runtime};
 
 static mut RT: Option<Box<Runtime>> = None;
-static mut WT:Option<Box<Vec<DataWriter>>> = None;
+static mut WT: Option<Box<Vec<Option<DataWriter>>>> = None;
+static mut FILE_SIZE: usize = 1024*1024*1024;
 
 fn processor(i:usize, buff:&Vec<u8>, size: usize)->bool {
     unsafe {
-        if let Some(wt )= &WT {
-            let wt = &wt[i];
-            wt.write(buff, size);
+        if let Some(wt )= &mut WT {
+            let mut new_file = false;
+            if let Some(wt )= &mut wt[i] {
+                wt.write(buff, size);
+                if wt.write_size > FILE_SIZE {
+                    new_file = true;
+                }
+            }
+            if new_file {
+                if let Some(rt) = &RT {
+                    println!("new file for {}", i);
+                    wt[i].replace(DataWriter::new(&rt, i as u32, "x:", "tmp"));
+                }
+            }
         }
     }
     true
@@ -20,7 +32,7 @@ fn processor(i:usize, buff:&Vec<u8>, size: usize)->bool {
 
 
 
-fn create_env()
+fn create_env(out_dir:&str, file_size:usize)
 {
     let s = System::new();
     let cpu_nums = s.get_processors().len();
@@ -28,13 +40,17 @@ fn create_env()
     unsafe {
         RT = Some(Box::new(runtime::Builder::new_multi_thread().enable_all().build().unwrap()));
     }
+    
+    unsafe {
+        FILE_SIZE = file_size;
+    }
 
     unsafe {
         if let Some(rt) = &RT {
             WT = Some(Box::new(Vec::new()));
             if let Some(r_wt) = &mut WT {
                 for i in 0..cpu_nums {
-                    r_wt.push(DataWriter::new(&rt, i as u32, "x:", "tmp"))
+                    r_wt.push(Some(DataWriter::new(&rt, i as u32, "x:", "tmp")))
                 }
             }
         }
@@ -53,6 +69,8 @@ fn main() {
                     .arg(Arg::with_name("addr0_cfg").default_value("0"))
                     .arg(Arg::with_name("addr0_start").default_value("0"))
                     .arg(Arg::with_name("addr0_end").default_value("0"))
+                    .arg(Arg::with_name("out_dir").default_value("x"))
+                    .arg(Arg::with_name("file_size").default_value("1024*1024*1024"))
                     .get_matches();
     let proc_name = matches.value_of("process").unwrap();
     let buff_size = matches.value_of("buff_size").unwrap().parse().unwrap();
@@ -62,12 +80,14 @@ fn main() {
     let addr0_cfg = matches.value_of("addr0_cfg").unwrap().parse().unwrap();
     let addr0_start = matches.value_of("addr0_start").unwrap().parse().unwrap();
     let addr0_end = matches.value_of("addr0_end").unwrap().parse().unwrap();
+    let out_dir = matches.value_of("out_dir").unwrap();
+    let file_size = matches.value_of("out_dir").unwrap().parse().unwrap();
     println!("process {}", proc_name);
     let s = System::new_all();
     let p = s.get_process_by_name(proc_name)[0].pid();
     let cur_pid = get_current_pid().unwrap();
     setup_host_pid(handle, cur_pid as u32).expect("Set Host Pid Failed");
-    create_env();
+    create_env(out_dir, file_size);
     println!("start capturing ...");
     setup_pt_no_pmi(handle, p as u32, buff_size, mtc, psb, cyc, addr0_cfg, addr0_start, addr0_end, &mut processor).expect("Start pt failed");
     close_pt_handle(handle).expect("Close pt handle errord");

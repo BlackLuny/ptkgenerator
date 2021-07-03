@@ -13,7 +13,7 @@ mod test {
         let v = vec![65;100];
         let threaded_rt = runtime::Builder::new_multi_thread().enable_all().build().unwrap();
         {
-            let d = DataWriter::new(&threaded_rt, 0, "", "tmp");
+            let mut d = DataWriter::new(&threaded_rt, 0, "", "tmp");
             d.write(&v, v.len());
             rst_file = d.file_name;
         }

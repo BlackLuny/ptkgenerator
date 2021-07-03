@@ -7,6 +7,7 @@
     pub struct DataWriter {
         tx: mpsc::Sender<Vec<u8>>,
         pub file_name:String,
+        pub write_size:usize,
     }
     fn create_async_writer(rt: &Runtime, file_name: &str) -> mpsc::Sender<Vec<u8>>
     {
@@ -31,11 +32,12 @@
     impl DataWriter {
         pub fn new(rt: &Runtime, idx:u32, dir:&str, suffix:&'static str) ->DataWriter {
             let name = get_file_name(idx, dir, suffix);
-            DataWriter {tx: create_async_writer(rt, &name), file_name: name}
+            DataWriter {tx: create_async_writer(rt, &name), file_name: name, write_size: 0}
         }
 
-        pub fn write(&self, data:&Vec<u8>, len:usize) {
+        pub fn write(&mut self, data:&Vec<u8>, len:usize) {
             let d = data[..len].to_vec();
             self.tx.try_send(d).unwrap();
+            self.write_size += len;
         }
     }
