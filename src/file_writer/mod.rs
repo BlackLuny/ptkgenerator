@@ -10,16 +10,19 @@ pub struct DataWriter {
     pub dir: String,
     pub write_size: usize,
 }
-fn create_async_writer(rt: &Runtime, file_name: &str) -> mpsc::Sender<Vec<u8>> {
+fn create_async_writer(rt: &Runtime, file_name: &str, complete_name: String) -> mpsc::Sender<Vec<u8>> {
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(10000);
     let f_name = file_name.to_owned();
     rt.spawn(async move {
-        let mut f = fs::File::create(&f_name).await.unwrap();
-        while let Some(d) = rx.recv().await {
-            f.write_all(&d).await.unwrap();
+        {
+            let mut f = fs::File::create(&f_name).await.unwrap();
+            while let Some(d) = rx.recv().await {
+                f.write_all(&d).await.unwrap();
+            }
+            println!("write finished!");
+            f.flush().await.unwrap();
         }
-        println!("write finished!");
-        f.flush().await.unwrap();
+        fs::rename(&f_name, &complete_name).await.unwrap();
     });
     tx
 }
@@ -36,8 +39,9 @@ fn get_file_name(idx: u32, dir: &str, suffix: &str) -> String {
 impl DataWriter {
     pub fn new(rt: &Runtime, idx: u32, dir: &str, suffix: &'static str) -> DataWriter {
         let name = get_file_name(idx, dir, suffix);
+        let complete_name = format!("{}data", &name[..name.len() - suffix.len()]);
         DataWriter {
-            tx: create_async_writer(rt, &name),
+            tx: create_async_writer(rt, &name, complete_name),
             file_name: name,
             write_size: 0,
             dir: dir.to_owned(),
