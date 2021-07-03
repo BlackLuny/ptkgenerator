@@ -1,17 +1,19 @@
 #[cfg(test)]
 mod test {
-    use tokio::runtime;
-    use tokio::fs;
     use std::time::Duration;
+    use tokio::fs;
+    use tokio::runtime;
     use tokio::time::sleep;
 
     use ptkgenerator::file_writer::DataWriter;
     #[test]
-    fn test_writer()
-    {
+    fn test_writer() {
         let rst_file;
-        let v = vec![65;100];
-        let threaded_rt = runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+        let v = vec![65; 100];
+        let threaded_rt = runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         {
             let mut d = DataWriter::new(&threaded_rt, 0, "", "tmp");
             d.write(&v, v.len());
@@ -24,7 +26,5 @@ mod test {
             assert_eq!(r[..], v[..r.len()]);
             fs::remove_file(&rst_file).await.unwrap();
         });
-        
     }
-
 }
