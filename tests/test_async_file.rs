@@ -1,17 +1,11 @@
 #[cfg(test)]
 mod test {
-    use std::sync::mpsc::Sender;
-
     use tokio::runtime;
     use tokio::fs;
-    use tokio::sync::{mpsc, oneshot};
-    use tokio::io::AsyncWriteExt;
     use std::time::Duration;
     use tokio::time::sleep;
-    use std::sync::Arc;
-    use std::cell::RefCell;
 
-    use ptkgenerator::process_util::DataWriter;
+    use ptkgenerator::file_writer::DataWriter;
     #[test]
     fn test_writer()
     {

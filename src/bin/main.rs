@@ -2,7 +2,7 @@
 use clap::{App, Arg};
 use ptkgenerator::pt_ctrl::*;
 use sysinfo::{ProcessExt, System, SystemExt, get_current_pid};
-use ptkgenerator::process_util::DataWriter;
+use ptkgenerator::file_writer::DataWriter;
 use tokio::runtime::{self, Runtime};
 
 static mut RT: Option<Box<Runtime>> = None;
