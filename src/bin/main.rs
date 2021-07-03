@@ -50,7 +50,7 @@ fn create_env(out_dir:&str, file_size:usize)
             WT = Some(Box::new(Vec::new()));
             if let Some(r_wt) = &mut WT {
                 for i in 0..cpu_nums {
-                    r_wt.push(Some(DataWriter::new(&rt, i as u32, "x:", "tmp")))
+                    r_wt.push(Some(DataWriter::new(&rt, i as u32, out_dir, "tmp")))
                 }
             }
         }
@@ -69,7 +69,7 @@ fn main() {
                     .arg(Arg::with_name("addr0_cfg").default_value("0"))
                     .arg(Arg::with_name("addr0_start").default_value("0"))
                     .arg(Arg::with_name("addr0_end").default_value("0"))
-                    .arg(Arg::with_name("out_dir").default_value("x"))
+                    .arg(Arg::with_name("out_dir").default_value("x:"))
                     .arg(Arg::with_name("file_size").default_value("1024*1024*1024"))
                     .get_matches();
     let proc_name = matches.value_of("process").unwrap();

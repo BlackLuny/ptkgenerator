@@ -6,19 +6,18 @@ mod test {
     use ptkgenerator::pt_ctrl::*;
     use winapi::um::winnt::HANDLE;
     use std::mem::size_of;
-    use std::sync::Arc;
     use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 
-    static mut g_handle: HANDLE = INVALID_HANDLE_VALUE;
+    static mut HWD: HANDLE = INVALID_HANDLE_VALUE;
     static H: Once = Once::new();
     fn test_get_handle() ->HANDLE
     {
         H.call_once(||{
             unsafe {
-                g_handle =get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
+                HWD =get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
             }
          });
-        unsafe {g_handle}
+        unsafe {HWD}
     }
     
     #[test]
@@ -60,7 +59,7 @@ mod test {
         let r = setup_host_pid(handle, pid);
         assert_eq!(r, Ok(()));
         let mut flags = [false; 16];
-        let r = setup_pt_no_pmi(handle, pid, 256, 3,5,1,0,0,0, &mut (|i, v, _| {
+        let r = setup_pt_no_pmi(handle, pid, 256, 3,5,1,0,0,0, &mut (|i, _, _| {
             flags[i] = true;
             flags.iter().any(|d| *d == false)
         }));

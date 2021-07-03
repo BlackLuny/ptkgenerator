@@ -141,7 +141,8 @@ pub fn setup_host_pid(h: HANDLE, pid: u32)->Result<(), u32>
     let r = unsafe {
         DeviceIoControl(h, code, req_ptr,req_size as u32, &mut rsp as *mut _ as LPVOID, rsp_size as DWORD,  (&mut rsp_len) as *mut u32, null_mut())
     };
-    if r != 0 && rsp_size as u32 == rsp_len {
+    req.pid = pid;
+    if r != 0 && rsp_size as u32 == rsp_len && rsp.rst == 0 {
         Ok(())
     } else {
         Err(rsp_len)
