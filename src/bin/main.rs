@@ -128,7 +128,7 @@ fn main() {
                 .long("addr0_end")
                 .default_value("0"),
         )
-        .arg(Arg::with_name("out_dir").short("o").default_value("x:"))
+        .arg(Arg::with_name("out_dir").short("o").default_value("x:\\"))
         .arg(
             Arg::with_name("file_size")
                 .long("file_size")

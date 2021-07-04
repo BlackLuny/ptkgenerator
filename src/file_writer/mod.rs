@@ -33,11 +33,11 @@ fn get_file_name(idx: u32, dir: &str, suffix: &str) -> String {
         .unwrap()
         .as_secs()
         .to_string();
-    format!("{}\\{}-{}.{}", dir, time, idx.to_string(), suffix)
+    format!("{}{}-{}.{}", dir, time, idx.to_string(), suffix)
 }
 
 impl DataWriter {
-    pub fn new(rt: &Runtime, idx: u32, dir: &str, suffix: &'static str) -> DataWriter {
+    pub fn new(rt: &Runtime, idx: u32, dir: &str, suffix: &str) -> DataWriter {
         let name = get_file_name(idx, dir, suffix);
         let complete_name = format!("{}data", &name[..name.len() - suffix.len()]);
         DataWriter {

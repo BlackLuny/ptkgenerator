@@ -6,6 +6,10 @@ mod test {
     use std::sync::Once;
     use winapi::um::handleapi::INVALID_HANDLE_VALUE;
     use winapi::um::winnt::HANDLE;
+    use libipt::ConfigBuilder;
+    use libipt::insn::InsnDecoder;
+    use libipt::Image;
+    use libipt::Asid;
 
     static mut HWD: HANDLE = INVALID_HANDLE_VALUE;
     static H: Once = Once::new();
@@ -83,5 +87,85 @@ mod test {
         );
         assert_eq!(r, Ok(()));
         assert_eq!(true, flags.iter().all(|d| *d == true));
+    }
+
+    #[test]
+    fn test_decode()
+    {
+        use winapi::um::processthreadsapi::GetCurrentProcessId;
+        let mut cnt = 0;
+        let mut buff = Vec::new();
+        let handle = test_get_handle();
+        let pid = unsafe { GetCurrentProcessId() };
+        let r = setup_host_pid(handle, pid);
+        assert_eq!(r, Ok(()));
+        setup_pt_no_pmi(
+            handle,
+            pid,
+            256,
+            3,
+            5,
+            1,
+            0,
+            0,
+            0,
+            &mut (|i, d, len| {
+                if i == 0 {
+                    for j in 0..len {
+                        buff.push(d[j])
+                    }
+                    if buff.len() > 5 * 1024 * 1024 {
+                        println!("complete collect");
+                        let cfg = ConfigBuilder::new(&mut buff).unwrap().finish();
+                        
+                        let mut decoder = InsnDecoder::new(&cfg).unwrap();
+                
+                        let mut cb = |rst:&mut [u8], addr: u64, _: Asid| {
+                            for i in 0..rst.len() {
+                                rst[i] = unsafe {
+                                    *((addr + i as u64) as *const u8)
+                                };
+                            }
+                            rst.len() as i32
+                        };
+
+                        let mut img = Image::new(None).unwrap();
+                        let mut a:&mut dyn FnMut(&mut [u8], u64, Asid) -> i32 = &mut cb;
+                        let a = &mut a;
+                        img.set_callback(Some(a as *mut _ as *mut usize)).unwrap();
+                
+                        decoder.set_image(Some(&mut img)).unwrap();
+
+                        assert_eq!(decoder.sync_forward().unwrap().eos(), false);
+
+                        
+                        // fetch event
+                        while let Ok((_, s)) = decoder.event() {
+                            if !s.event_pending() {
+                                break;
+                            }
+                        }
+
+                        // loop {
+                        while let Ok((_,_)) = decoder.next() {
+                            cnt+=1;
+
+                            // fetch event
+                            while let Ok((_, s)) = decoder.event() {
+                                if !s.event_pending() {
+                                    break;
+                                }
+                            }
+                        }
+
+                        println!("complete decode {}", cnt);
+                        return false;
+                    }
+                }
+                true
+            }),
+        ).unwrap();
+        
+        assert_ne!(cnt, 0);
     }
 }
