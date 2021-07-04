@@ -120,7 +120,7 @@ mod test {
                         
                         let mut decoder = InsnDecoder::new(&cfg).unwrap();
                 
-                        let mut cb = |rst:&mut [u8], addr: u64, _: Asid| {
+                        let cb = |rst:&mut [u8], addr: u64, _: Asid| {
                             for i in 0..rst.len() {
                                 rst[i] = unsafe {
                                     *((addr + i as u64) as *const u8)
@@ -130,9 +130,7 @@ mod test {
                         };
 
                         let mut img = Image::new(None).unwrap();
-                        let mut a:&mut dyn FnMut(&mut [u8], u64, Asid) -> i32 = &mut cb;
-                        let a = &mut a;
-                        img.set_callback(Some(a as *mut _ as *mut usize)).unwrap();
+                        img.set_callback(Some(cb)).unwrap();
                 
                         decoder.set_image(Some(&mut img)).unwrap();
 
