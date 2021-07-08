@@ -55,7 +55,6 @@ pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher)->usi
         match decoder.next() {
             Ok((_,_)) => {
                 cnt+=1;
-    
                 // fetch event
                 while let Ok((_, s)) = decoder.event() {
                     if !s.event_pending() {
