@@ -111,7 +111,7 @@ pub fn read_process_memory_drv(
     pid: u32,
     address: u64,
     len: u16,
-    ouput_buff: &mut Vec<u8>,
+    ouput_buff: &mut [u8],
 ) -> Result<(), u32> {
     let code = CTL_CODE(
         FILE_DEVICE_UNKNOWN,
