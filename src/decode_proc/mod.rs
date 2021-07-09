@@ -3,14 +3,17 @@ use std::collections::HashSet;
 use winapi::um::winnt::HANDLE;
 
 use libipt::{Config, ConfigBuilder};
-use libipt::insn::InsnDecoder;
+use libipt::insn::{Insn, InsnDecoder};
 use libipt::Image;
 use libipt::Asid;
+use std::sync::mpsc;
 use crate::mem_cacher::MemCacher;
 
 use super::pt_ctrl::read_process_memory_drv;
+use super::post_proc::InsInfo;
+use std::collections::HashMap;
 
-pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher)->usize
+pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher, data_rst: &mut HashMap<usize, [InsInfo; 4096]>)->usize
 {
     let mut cnt = 0;
     let cfg = ConfigBuilder::new(data).unwrap().finish();
@@ -30,11 +33,6 @@ pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher)->usi
     cacher.f = Some(Box::new(f));    
 
     let cb = |rst:&mut [u8], addr: u64, _: Asid| {
-        // for i in 0..rst.len() {
-        //     rst[i] = unsafe {
-        //         *((addr + i as u64) as *const u8)
-        //     };
-        // }
         cacher.get_content(rst, addr) as i32
     };
 
@@ -50,11 +48,12 @@ pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher)->usi
             break;
         }
     }
-
+    let mut insn_rst = Vec::<Insn>::new();
     loop {
         match decoder.next() {
-            Ok((_,_)) => {
+            Ok((i,_)) => {
                 cnt+=1;
+                insn_rst.push(i);
                 // fetch event
                 while let Ok((_, s)) = decoder.event() {
                     if !s.event_pending() {
@@ -78,6 +77,18 @@ pub fn decode(h: usize, pid: usize, data:&mut [u8], cacher: &mut MemCacher)->usi
             }
         }
     }
-
+    //post_tx.send(insn_rst).unwrap();
+    for i in insn_rst{
+        let addr = i.ip();
+        let off = addr as usize & 0xfff;
+        let page = addr as usize & (!0xfff);
+        if let Some(it) = data_rst.get_mut(&page) {
+            it[off].exec_cnt+=1;
+        } else {
+            let mut tmp = [InsInfo::default();4096];
+            tmp[off].exec_cnt += 1;
+            data_rst.insert(page, tmp);
+        }
+    }
     cnt
 }

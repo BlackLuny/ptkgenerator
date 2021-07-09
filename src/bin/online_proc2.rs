@@ -1,12 +1,16 @@
 use clap::{App, Arg};
+use crossbeam::channel;
 use ptkgenerator::data_spliter::split;
 use ptkgenerator::decode_proc::decode;
 use ptkgenerator::mem_cacher::MemCacher;
+use ptkgenerator::post_proc::*;
 use ptkgenerator::pt_ctrl::*;
-use sysinfo::{get_current_pid, ProcessExt, System, SystemExt};
-use std::thread;
+use std::collections::HashMap;
+use std::io::Write;
 use std::sync::mpsc;
-use crossbeam::channel;
+use std::thread;
+use std::thread::JoinHandle;
+use sysinfo::{get_current_pid, ProcessExt, System, SystemExt};
 
 static mut PD: Option<Box<Vec<Option<ProcessorData>>>> = None;
 static mut FILE_SIZE: usize = 1 * GB;
@@ -14,29 +18,44 @@ static GB: usize = 1024 * 1024 * 1024;
 static MB: usize = 1024 * 1024;
 
 static mut DEV_HANDLE: usize = 0;
-static mut PID:usize = 0;
+static mut PID: usize = 0;
+
+static mut G_STOP: bool = false;
+
+static mut G_DATA: Option<HashMap<usize, [InsInfo; 4096]>> = None;
 
 struct ProcessorData {
-    tx: mpsc::Sender<Vec<u8>>,  // sernder for process data
+    tx: (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>), // sernder for process data
+    data: HashMap<usize, [InsInfo; 4096]>,                       // processor collected data
+    worker: Option<JoinHandle<()>>,
 }
 
-
-fn create_worker_thread(_: usize, rx: channel::Receiver<Vec<u8>>)
-{
-    thread::spawn(move || {
+fn create_worker_thread(
+    _: usize,
+    rx: channel::Receiver<Vec<u8>>,
+    data: &'static mut HashMap<usize, [InsInfo; 4096]>,
+) -> JoinHandle<()> {
+    let h = thread::spawn(move || {
         let mut cacher = MemCacher::new();
         while let Ok(mut d) = rx.recv() {
-            let cnt = decode(unsafe {DEV_HANDLE}, unsafe {PID}, &mut d, &mut cacher);
-            println!("decode cnt = {}", cnt);
+            let _ = decode(
+                unsafe { DEV_HANDLE },
+                unsafe { PID },
+                &mut d,
+                &mut cacher,
+                data,
+            );
         }
     });
+    h
 }
 
-
-fn create_spliter_thread(_: usize, worker_tx: channel::Sender<Vec<u8>>) ->mpsc::Sender<Vec<u8>>
-{
+fn create_spliter_thread(
+    _: usize,
+    worker_tx: channel::Sender<Vec<u8>>,
+) -> (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>) {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    thread::spawn(move || {
+    let h = thread::spawn(move || {
         let mut assemed_data = Vec::<u8>::new();
         while let Ok(mut d) = rx.recv() {
             // copy to the end
@@ -48,7 +67,9 @@ fn create_spliter_thread(_: usize, worker_tx: channel::Sender<Vec<u8>>) ->mpsc::
             }
             let mut last_offset = offsets[0];
             for &offset in offsets.iter().skip(1) {
-                worker_tx.send(assemed_data[last_offset..offset].to_vec()).unwrap();
+                worker_tx
+                    .send(assemed_data[last_offset..offset].to_vec())
+                    .unwrap();
                 last_offset = offset;
             }
             let end_offset = offsets.last().unwrap();
@@ -57,15 +78,18 @@ fn create_spliter_thread(_: usize, worker_tx: channel::Sender<Vec<u8>>) ->mpsc::
             }
         }
     });
-    tx
+    (Some(tx), Some(h))
 }
 
 impl ProcessorData {
-    fn new(idx: usize, tx:channel::Sender<Vec<u8>>) ->ProcessorData {
-        ProcessorData {tx: create_spliter_thread(idx, tx)}
+    fn new(idx: usize, tx: channel::Sender<Vec<u8>>) -> ProcessorData {
+        ProcessorData {
+            tx: create_spliter_thread(idx, tx),
+            data: HashMap::new(),
+            worker: None,
+        }
     }
 }
-
 
 fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
     unsafe {
@@ -73,18 +97,31 @@ fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
             if let Some(pd) = &pd[i] {
                 if size > 0 {
                     let d = buff[0..size].to_vec();
-                    pd.tx.send(d).unwrap();
+                    if let Some(t) = &pd.tx.0 {
+                        t.send(d).unwrap();
+                    }
                 }
             }
         }
     }
-    true
+    unsafe { G_STOP == false }
 }
 
-fn create_env(_: &str, file_size: &str, dev_handle: usize, pid: usize, (tx, rx) :(channel::Sender<Vec<u8>>, channel::Receiver<Vec<u8>>)) {
+fn create_env(
+    _: &str,
+    file_size: &str,
+    dev_handle: usize,
+    pid: usize,
+    (tx, rx): (channel::Sender<Vec<u8>>, channel::Receiver<Vec<u8>>),
+) {
     let s = System::new();
     let cpu_nums = s.get_processors().len();
     println!("cpu_nums = {:?}", cpu_nums);
+
+    // create post_processor
+    unsafe {
+        G_DATA = Some(HashMap::new());
+    };
 
     unsafe {
         PD = Some(Box::new(Vec::new()));
@@ -98,9 +135,14 @@ fn create_env(_: &str, file_size: &str, dev_handle: usize, pid: usize, (tx, rx) 
     // create workers -1 cpu nums
 
     for i in 0..cpu_nums - 1 {
-        create_worker_thread(i, rx.clone());
+        unsafe {
+            if let Some(pd) = &mut PD {
+                if let Some(pd) = &mut pd[i] {
+                    pd.worker = Some(create_worker_thread(i, rx.clone(), &mut pd.data));
+                }
+            }
+        };
     }
-    
 
     set_file_size(file_size);
 
@@ -142,8 +184,83 @@ fn set_file_size(file_size: &str) {
         }
     }
 }
+fn wait_for_complete() {
+    let s = System::new();
+    let cpu_nums = s.get_processors().len();
+
+    // drop spliter tx
+    println!("wait spliter end ……");
+    for i in 0..cpu_nums {
+        unsafe {
+            if let Some(pd) = &mut PD {
+                if let Some(pd) = &mut pd[i] {
+                    let _ = pd.tx.0.take();
+                    let h = pd.tx.1.take().unwrap();
+                    h.join().unwrap();
+                }
+            }
+        }
+    }
+    println!("wait spliter end complete!");
+
+    println!("wait worker end ……");
+    for i in 0..cpu_nums {
+        unsafe {
+            if let Some(pd) = &mut PD {
+                if let Some(pd) = &mut pd[i] {
+                    if let Some(h) = pd.worker.take() {
+                        h.join().unwrap();
+                    }
+                }
+            }
+        }
+    }
+    println!("wait worker end complete!");
+}
+
+fn collect_all_data() {
+    let g_data = unsafe { G_DATA.as_mut().unwrap() };
+    let s = System::new();
+    let cpu_nums = s.get_processors().len();
+
+    for i in 0..cpu_nums - 1 {
+        unsafe {
+            if let Some(pd) = &mut PD {
+                if let Some(pd) = &mut pd[i] {
+                    for (page, insn) in &pd.data {
+                        if let Some(p) = g_data.get_mut(page) {
+                            for (i, cur) in insn.iter().enumerate() {
+                                p[i].exec_cnt += cur.exec_cnt;
+                            }
+                        } else {
+                            g_data.insert(*page, *insn);
+                        }
+                    }
+                }
+            }
+            PD = None;
+        };
+    }
+    let mut f = std::fs::File::create("result.txt").expect("Create restult.txt failed!");
+    for (page, insn) in g_data {
+        for (i, ins) in insn.iter().enumerate() {
+            if ins.exec_cnt > 0 {
+                f.write_fmt(format_args!("addr: 0x{:x}, cnt: {}\n", page + i, ins.exec_cnt)).unwrap();
+            }
+        }
+    }
+    println!("print complete!");
+}
 
 fn main() {
+    ctrlc::set_handler(move || {
+        println!("Stop collection……");
+        unsafe {
+            G_STOP = true;
+        };
+    })
+    .expect("Error setting Ctrl-C handler");
+
     let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
     let matches = App::new("PtkGenerator")
         .version("1.0")
@@ -199,8 +316,14 @@ fn main() {
     println!("process {}", proc_name);
     let p = get_process_id(proc_name).unwrap();
 
-    let (tx, rx) = channel::unbounded::<Vec<u8>>();
-    create_env(out_dir, file_size, handle as usize, p, (tx, rx));
+    create_env(
+        out_dir,
+        file_size,
+        handle as usize,
+        p,
+        channel::unbounded::<Vec<u8>>(),
+    );
+
     setup_host_pid(handle, get_current_pid().unwrap() as u32).expect("Set Host Pid Failed");
 
     println!("start capturing ...");
@@ -217,5 +340,9 @@ fn main() {
         &mut processor,
     )
     .expect("Start pt failed");
+
+    // post proc here
+    wait_for_complete();
+    collect_all_data();
     close_pt_handle(handle).expect("Close pt handle errord");
 }

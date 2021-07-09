@@ -14,14 +14,13 @@ static GB: usize = 1024 * 1024 * 1024;
 static MB: usize = 1024 * 1024;
 
 static mut DEV_HANDLE: usize = 0;
-static mut PID:usize = 0;
+static mut PID: usize = 0;
 
 struct ProcessorData {
-    tx: mpsc::Sender<Vec<u8>>,  // sernder for process data
+    tx: mpsc::Sender<Vec<u8>>, // sernder for process data
 }
 
-fn create_process_thread(rt: &'static Runtime, idx: usize) ->mpsc::Sender<Vec<u8>>
-{
+fn create_process_thread(rt: &'static Runtime, idx: usize) -> mpsc::Sender<Vec<u8>> {
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1000000);
     rt.spawn(async move {
         let mut assemed_data = Vec::<u8>::new();
@@ -38,12 +37,12 @@ fn create_process_thread(rt: &'static Runtime, idx: usize) ->mpsc::Sender<Vec<u8
             for &offset in offsets.iter().skip(1) {
                 let mut a = assemed_data[last_offset..offset].to_vec();
                 //rt.spawn(async move{
-                    let cnt = decode(unsafe {DEV_HANDLE}, unsafe {PID}, &mut a, &mut cacher);
-                    println!("decode cnt = {}", cnt);
+                // let cnt = decode(unsafe {DEV_HANDLE}, unsafe {PID}, &mut a, &mut cacher);
+                // println!("decode cnt = {}", cnt);
                 //});
                 last_offset = offset;
             }
-            
+
             let end_offset = offsets.last().unwrap();
             if *end_offset > 0 {
                 assemed_data = assemed_data[(*end_offset as usize)..].to_vec();
@@ -53,11 +52,12 @@ fn create_process_thread(rt: &'static Runtime, idx: usize) ->mpsc::Sender<Vec<u8
     tx
 }
 impl ProcessorData {
-    fn new(rt: &'static Runtime, idx: usize)->ProcessorData {
-        ProcessorData {tx: create_process_thread(&rt, idx)}
+    fn new(rt: &'static Runtime, idx: usize) -> ProcessorData {
+        ProcessorData {
+            tx: create_process_thread(&rt, idx),
+        }
     }
 }
-
 
 fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
     unsafe {
