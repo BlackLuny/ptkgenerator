@@ -6,6 +6,7 @@ use ptkgenerator::pt_ctrl::*;
 use sysinfo::{get_current_pid, ProcessExt, System, SystemExt};
 use std::thread;
 use std::sync::mpsc;
+use crossbeam::channel;
 
 static mut PD: Option<Box<Vec<Option<ProcessorData>>>> = None;
 static mut FILE_SIZE: usize = 1 * GB;
@@ -19,12 +20,24 @@ struct ProcessorData {
     tx: mpsc::Sender<Vec<u8>>,  // sernder for process data
 }
 
-fn create_process_thread(_: usize) ->mpsc::Sender<Vec<u8>>
+
+fn create_worker_thread(_: usize, rx: channel::Receiver<Vec<u8>>)
+{
+    thread::spawn(move || {
+        let mut cacher = MemCacher::new();
+        while let Ok(mut d) = rx.recv() {
+            let cnt = decode(unsafe {DEV_HANDLE}, unsafe {PID}, &mut d, &mut cacher);
+            println!("decode cnt = {}", cnt);
+        }
+    });
+}
+
+
+fn create_spliter_thread(_: usize, worker_tx: channel::Sender<Vec<u8>>) ->mpsc::Sender<Vec<u8>>
 {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     thread::spawn(move || {
         let mut assemed_data = Vec::<u8>::new();
-        let mut cacher = MemCacher::new();
         while let Ok(mut d) = rx.recv() {
             // copy to the end
             assemed_data.append(&mut d);
@@ -35,14 +48,9 @@ fn create_process_thread(_: usize) ->mpsc::Sender<Vec<u8>>
             }
             let mut last_offset = offsets[0];
             for &offset in offsets.iter().skip(1) {
-                let mut a = assemed_data[last_offset..offset].to_vec();
-                //rt.spawn(async move{
-                    let cnt = decode(unsafe {DEV_HANDLE}, unsafe {PID}, &mut a, &mut cacher);
-                    println!("decode cnt = {}", cnt);
-                //});
+                worker_tx.send(assemed_data[last_offset..offset].to_vec()).unwrap();
                 last_offset = offset;
             }
-            
             let end_offset = offsets.last().unwrap();
             if *end_offset > 0 {
                 assemed_data = assemed_data[(*end_offset as usize)..].to_vec();
@@ -51,9 +59,10 @@ fn create_process_thread(_: usize) ->mpsc::Sender<Vec<u8>>
     });
     tx
 }
+
 impl ProcessorData {
-    fn new(idx: usize)->ProcessorData {
-        ProcessorData {tx: create_process_thread(idx)}
+    fn new(idx: usize, tx:channel::Sender<Vec<u8>>) ->ProcessorData {
+        ProcessorData {tx: create_spliter_thread(idx, tx)}
     }
 }
 
@@ -72,7 +81,7 @@ fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
     true
 }
 
-fn create_env(_: &str, file_size: &str, dev_handle: usize, pid: usize) {
+fn create_env(_: &str, file_size: &str, dev_handle: usize, pid: usize, (tx, rx) :(channel::Sender<Vec<u8>>, channel::Receiver<Vec<u8>>)) {
     let s = System::new();
     let cpu_nums = s.get_processors().len();
     println!("cpu_nums = {:?}", cpu_nums);
@@ -81,10 +90,17 @@ fn create_env(_: &str, file_size: &str, dev_handle: usize, pid: usize) {
         PD = Some(Box::new(Vec::new()));
         if let Some(r_wt) = &mut PD {
             for i in 0..cpu_nums {
-                r_wt.push(Some(ProcessorData::new(i)));
+                r_wt.push(Some(ProcessorData::new(i, tx.clone())));
             }
         }
     }
+
+    // create workers -1 cpu nums
+
+    for i in 0..cpu_nums - 1 {
+        create_worker_thread(i, rx.clone());
+    }
+    
 
     set_file_size(file_size);
 
@@ -183,7 +199,8 @@ fn main() {
     println!("process {}", proc_name);
     let p = get_process_id(proc_name).unwrap();
 
-    create_env(out_dir, file_size, handle as usize, p);
+    let (tx, rx) = channel::unbounded::<Vec<u8>>();
+    create_env(out_dir, file_size, handle as usize, p, (tx, rx));
     setup_host_pid(handle, get_current_pid().unwrap() as u32).expect("Set Host Pid Failed");
 
     println!("start capturing ...");

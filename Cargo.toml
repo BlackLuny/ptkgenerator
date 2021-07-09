@@ -11,3 +11,4 @@ winapi = { version = "0.3", features = ["winnls", "stringapiset", "handleapi", "
 sysinfo = "0.18.0"
 tokio = {version = "1.6.0", features = ["rt", "rt-multi-thread", "fs", "sync", "io-util", "time"]}
 libipt = "0.1.4"
+crossbeam = "0.8.0"
