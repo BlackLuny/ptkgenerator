@@ -1,12 +1,9 @@
-use std::collections::HashSet;
-
 use winapi::um::winnt::HANDLE;
 
-use libipt::{Config, ConfigBuilder};
+use libipt::{ConfigBuilder};
 use libipt::insn::{Insn, InsnDecoder};
 use libipt::Image;
 use libipt::Asid;
-use std::sync::mpsc;
 use crate::mem_cacher::MemCacher;
 
 use super::pt_ctrl::read_process_memory_drv;

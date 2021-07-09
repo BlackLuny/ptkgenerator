@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::mpsc::{self, Sender}};
+use std::{collections::HashMap, sync::mpsc};
 use libipt::insn::Insn;
 use std::thread;
 

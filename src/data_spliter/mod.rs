@@ -1,6 +1,4 @@
-
-use std::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
-use libipt::{ConfigBuilder, Config};
+use libipt::{ConfigBuilder};
 use libipt::insn::InsnDecoder;
 
 pub fn split(data: &mut Vec<u8>)->Vec<usize> {

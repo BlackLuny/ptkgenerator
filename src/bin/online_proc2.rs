@@ -22,8 +22,6 @@ static mut PID: usize = 0;
 
 static mut G_STOP: bool = false;
 
-static mut G_DATA: Option<HashMap<usize, [InsInfo; 4096]>> = None;
-
 struct ProcessorData {
     tx: (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>), // sernder for process data
     data: HashMap<usize, [InsInfo; 4096]>,                       // processor collected data
@@ -117,11 +115,6 @@ fn create_env(
     let s = System::new();
     let cpu_nums = s.get_processors().len();
     println!("cpu_nums = {:?}", cpu_nums);
-
-    // create post_processor
-    unsafe {
-        G_DATA = Some(HashMap::new());
-    };
 
     unsafe {
         PD = Some(Box::new(Vec::new()));
@@ -219,7 +212,7 @@ fn wait_for_complete() {
 }
 
 fn collect_all_data() {
-    let g_data = unsafe { G_DATA.as_mut().unwrap() };
+    let mut g_data: HashMap<usize, [InsInfo;4096]> = HashMap::new();
     let s = System::new();
     let cpu_nums = s.get_processors().len();
 
