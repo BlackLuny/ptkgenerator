@@ -11,6 +11,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
 use sysinfo::{get_current_pid, ProcessExt, System, SystemExt};
+use std::time::SystemTime;
+use ptkgenerator::file_writer::DataWriter;
+
+use tokio::runtime::{self, Runtime};
+static mut WT: Option<Box<Vec<Option<DataWriter>>>> = None;
+static mut RT: Option<Box<Runtime>> = None;
 
 static mut PD: Option<Box<Vec<Option<ProcessorData>>>> = None;
 static mut FILE_SIZE: usize = 1 * GB;
@@ -49,13 +55,14 @@ fn create_worker_thread(
 }
 
 fn create_spliter_thread(
-    _: usize,
+    idx: usize,
     worker_tx: channel::Sender<Vec<u8>>,
 ) -> (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>) {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let h = thread::spawn(move || {
         let mut assemed_data = Vec::<u8>::new();
         while let Ok(mut d) = rx.recv() {
+            //write_data(idx, d.clone());
             // copy to the end
             assemed_data.append(&mut d);
 
@@ -68,6 +75,7 @@ fn create_spliter_thread(
                 worker_tx
                     .send(assemed_data[last_offset..offset].to_vec())
                     .unwrap();
+                write_data(idx, assemed_data[last_offset..offset].to_vec());
                 last_offset = offset;
             }
             let end_offset = offsets.last().unwrap();
@@ -89,11 +97,21 @@ impl ProcessorData {
     }
 }
 
+fn write_data(i: usize, data: Vec<u8>) {
+    unsafe {
+        if let Some(wt) = &mut WT {
+            if let Some(wt) = &mut wt[i] {
+                wt.write(&data, data.len());
+            }
+        }
+    }
+}
 fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
     unsafe {
         if let Some(pd) = &mut PD {
             if let Some(pd) = &pd[i] {
                 if size > 0 {
+                    println!("cpu: {}, collected: {}", i, size);
                     let d = buff[0..size].to_vec();
                     if let Some(t) = &pd.tx.0 {
                         t.send(d).unwrap();
@@ -118,16 +136,36 @@ fn create_env(
 
     unsafe {
         PD = Some(Box::new(Vec::new()));
-        if let Some(r_wt) = &mut PD {
+        if let Some(pd) = &mut PD {
             for i in 0..cpu_nums {
-                r_wt.push(Some(ProcessorData::new(i, tx.clone())));
+                pd.push(Some(ProcessorData::new(i, tx.clone())));
+            }
+        }
+    }
+
+    unsafe {
+        RT = Some(Box::new(
+            runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        ));
+    }
+
+    unsafe {
+        if let Some(rt) = &RT {
+            WT = Some(Box::new(Vec::new()));
+            if let Some(r_wt) = &mut WT {
+                for i in 0..cpu_nums {
+                    r_wt.push(Some(DataWriter::new(&rt, i as u32, "x:\\", "dat")))
+                }
             }
         }
     }
 
     // create workers -1 cpu nums
 
-    for i in 0..cpu_nums - 1 {
+    for i in 0..cpu_nums - 8 {
         unsafe {
             if let Some(pd) = &mut PD {
                 if let Some(pd) = &mut pd[i] {
@@ -211,37 +249,55 @@ fn wait_for_complete() {
     println!("wait worker end complete!");
 }
 
+fn write_to_file(data:& HashMap<usize, [InsInfo; 4096]>)
+{
+    use serde_json::*;
+    let mut data_wt = HashMap::<usize, usize>::new();
+    let time = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .to_string();
+    let mut f = std::fs::File::create(format!("result-{}.txt", time)).expect("Create restult.txt failed!");
+    for (page, insn) in data {
+        for (i, ins) in insn.iter().enumerate() {
+            if ins.exec_cnt > 0 {
+                data_wt.insert(page + i, ins.exec_cnt);
+            }
+        }
+    }
+    let x = json!(data_wt);
+    f.write_fmt(format_args!("{}", x.to_string())).unwrap();
+    println!("total unique addr cnt: {}", data_wt.len());
+}
+
 fn collect_all_data() {
-    let mut g_data: HashMap<usize, [InsInfo;4096]> = HashMap::new();
+    let mut data: HashMap<usize, [InsInfo; 4096]> = HashMap::new();
     let s = System::new();
     let cpu_nums = s.get_processors().len();
 
-    for i in 0..cpu_nums - 1 {
-        unsafe {
-            if let Some(pd) = &mut PD {
+    // 合并多核数据
+
+    unsafe {
+        if let Some(pd) = &mut PD {
+            for i in 0..cpu_nums {
                 if let Some(pd) = &mut pd[i] {
                     for (page, insn) in &pd.data {
-                        if let Some(p) = g_data.get_mut(page) {
+                        if let Some(p) = data.get_mut(page) {
                             for (i, cur) in insn.iter().enumerate() {
                                 p[i].exec_cnt += cur.exec_cnt;
                             }
                         } else {
-                            g_data.insert(*page, *insn);
+                            data.insert(*page, *insn);
                         }
                     }
                 }
             }
-            PD = None;
-        };
-    }
-    let mut f = std::fs::File::create("result.txt").expect("Create restult.txt failed!");
-    for (page, insn) in g_data {
-        for (i, ins) in insn.iter().enumerate() {
-            if ins.exec_cnt > 0 {
-                f.write_fmt(format_args!("addr: 0x{:x}, cnt: {}\n", page + i, ins.exec_cnt)).unwrap();
-            }
         }
-    }
+        PD = None;
+    };
+
+    write_to_file(&data);
     println!("print complete!");
 }
 

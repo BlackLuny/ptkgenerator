@@ -1,7 +1,7 @@
 use winapi::um::winnt::HANDLE;
 
 use crate::mem_cacher::MemCacher;
-use libipt::insn::{Insn, InsnDecoder};
+use libipt::insn::{InsnDecoder};
 use libipt::Asid;
 use libipt::ConfigBuilder;
 use libipt::Image;

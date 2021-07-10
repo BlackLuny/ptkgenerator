@@ -332,6 +332,7 @@ where
     let mut tmp_buff = vec![0; 1024 * 800];
     let never = false;
     loop {
+        let mut flags = vec![false;rsp.out_buff_num as usize];
         for i in 0..rsp.out_buff_num as usize {
             let pos = read_pos[i];
             let buff = rsp.out_buffer_info[i];
@@ -339,7 +340,10 @@ where
             let read_size = fetch_data(buff as *mut u8, len, pos, &mut tmp_buff);
             read_pos[i] = (pos + read_size) % len;
             if !processor(i, &tmp_buff, read_size) {
-                return Ok(());
+                flags[i] = true;
+                if flags.iter().all(|d| *d == true) {
+                    return Ok(());
+                }
             }
         }
         if never {
