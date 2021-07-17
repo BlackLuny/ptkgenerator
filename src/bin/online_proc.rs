@@ -55,14 +55,13 @@ fn create_worker_thread(
 }
 
 fn create_spliter_thread(
-    idx: usize,
+    _: usize,
     worker_tx: channel::Sender<Vec<u8>>,
 ) -> (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>) {
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let h = thread::spawn(move || {
         let mut assemed_data = Vec::<u8>::new();
         while let Ok(mut d) = rx.recv() {
-            //write_data(idx, d.clone());
             // copy to the end
             assemed_data.append(&mut d);
 
@@ -75,7 +74,6 @@ fn create_spliter_thread(
                 worker_tx
                     .send(assemed_data[last_offset..offset].to_vec())
                     .unwrap();
-                write_data(idx, assemed_data[last_offset..offset].to_vec());
                 last_offset = offset;
             }
             let end_offset = offsets.last().unwrap();
@@ -97,21 +95,11 @@ impl ProcessorData {
     }
 }
 
-fn write_data(i: usize, data: Vec<u8>) {
-    unsafe {
-        if let Some(wt) = &mut WT {
-            if let Some(wt) = &mut wt[i] {
-                wt.write(&data, data.len());
-            }
-        }
-    }
-}
 fn processor(i: usize, buff: &Vec<u8>, size: usize) -> bool {
     unsafe {
         if let Some(pd) = &mut PD {
             if let Some(pd) = &pd[i] {
                 if size > 0 {
-                    println!("cpu: {}, collected: {}", i, size);
                     let d = buff[0..size].to_vec();
                     if let Some(t) = &pd.tx.0 {
                         t.send(d).unwrap();
@@ -165,7 +153,7 @@ fn create_env(
 
     // create workers -1 cpu nums
 
-    for i in 0..cpu_nums - 8 {
+    for i in 0..cpu_nums - 1 {
         unsafe {
             if let Some(pd) = &mut PD {
                 if let Some(pd) = &mut pd[i] {
@@ -220,11 +208,12 @@ fn wait_for_complete() {
     let cpu_nums = s.get_processors().len();
 
     // drop spliter tx
-    println!("wait spliter end ……");
+    println!("Wait spliter finish work");
     for i in 0..cpu_nums {
         unsafe {
             if let Some(pd) = &mut PD {
                 if let Some(pd) = &mut pd[i] {
+                    println!("Wait spliter[{}]", i);
                     let _ = pd.tx.0.take();
                     let h = pd.tx.1.take().unwrap();
                     h.join().unwrap();
@@ -232,37 +221,45 @@ fn wait_for_complete() {
             }
         }
     }
-    println!("wait spliter end complete!");
+    println!("All spliter finished!");
 
-    println!("wait worker end ……");
+    println!("Wait worker finish work");
     for i in 0..cpu_nums {
         unsafe {
             if let Some(pd) = &mut PD {
                 if let Some(pd) = &mut pd[i] {
                     if let Some(h) = pd.worker.take() {
+                        println!("Wait worker[{}]", i);
                         h.join().unwrap();
                     }
                 }
             }
         }
     }
-    println!("wait worker end complete!");
+    println!("All worker finished!");
 }
 
 fn write_to_file(data:& HashMap<usize, [InsInfo; 4096]>)
 {
     use serde_json::*;
-    let mut data_wt = HashMap::<usize, usize>::new();
+    let mut data_wt = HashMap::<String, usize>::new();
     let time = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs()
         .to_string();
+    use ptkgenerator::native_helper::{Process};
+    let mut p = Process::new(unsafe {
+        PID
+    });
+
     let mut f = std::fs::File::create(format!("result-{}.txt", time)).expect("Create restult.txt failed!");
     for (page, insn) in data {
         for (i, ins) in insn.iter().enumerate() {
             if ins.exec_cnt > 0 {
-                data_wt.insert(page + i, ins.exec_cnt);
+                let addr = page + i;
+                let m = p.query_module_info_by_addr(addr).or::<()>(Ok(("dummy".to_owned(), addr))).unwrap();
+                data_wt.insert(format!("{} + {}", m.0, m.1), ins.exec_cnt);
             }
         }
     }
