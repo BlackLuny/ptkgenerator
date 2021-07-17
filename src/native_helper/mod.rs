@@ -1,4 +1,4 @@
-use std::{ffi::CStr, os::raw::c_char};
+use std::{collections::HashMap, ffi::CStr, os::raw::c_char};
 
 pub struct ModuleInfo {
     pub name: String,
@@ -32,6 +32,11 @@ impl Default for ModuleInfoInner {
         }
     }
 }
+impl Clone for ModuleInfo {
+    fn clone(&self) -> Self {
+        ModuleInfo {name: self.name.to_owned(), base: self.base, size: self.size}
+    }
+}
 
 pub fn get_module_info(pid: usize) -> Result<Vec<ModuleInfo>, Box<dyn std::error::Error>> {
     unsafe {
@@ -54,12 +59,18 @@ pub fn get_module_info(pid: usize) -> Result<Vec<ModuleInfo>, Box<dyn std::error
 pub struct Process {
     pid: usize,
     module_info_cache: Option<ModuleInfo>,
-    all_module_info: Option<Vec<ModuleInfo>>,
+    all_module_info: Vec<ModuleInfo>,
+    modules_by_name: HashMap<String, ModuleInfo>,
 }
 
 impl Process {
     pub fn new(pid: usize)->Process {
-        Process {pid: pid, module_info_cache: None, all_module_info: None}
+        let all_module_info = get_module_info(pid).unwrap();
+        let mut modules_by_name = HashMap::new();
+        for x in &all_module_info {
+            modules_by_name.insert(x.name.to_owned(), x.clone());
+        }
+        Process {pid: pid, module_info_cache: None, all_module_info: all_module_info, modules_by_name: modules_by_name}
     }
 
     pub fn query_module_info_by_addr(&mut self, addr: usize) ->Result<(String, usize), ()> {
@@ -70,22 +81,24 @@ impl Process {
                 return Ok((m.name.to_owned(), addr - m.base as usize));
             }
         }
-        if self.all_module_info.is_none() {
-            let m = get_module_info(self.pid).unwrap();
-            self.all_module_info = Some(m);
-        }
-        
-        if let Some(m) = &self.all_module_info {
-            for m in m {
-                let base = m.base as usize;
-                let size = m.size as usize;
-                if addr >= base && addr <= base + size {
-                    self.module_info_cache = Some(ModuleInfo {name: m.name.to_owned(), base: m.base, size: m.size});
-                    return Ok((m.name.to_owned(), addr - m.base as usize));
-                }
+
+        for m in &self.all_module_info {
+            let base = m.base as usize;
+            let size = m.size as usize;
+            if addr >= base && addr <= base + size {
+                self.module_info_cache = Some(ModuleInfo {name: m.name.to_owned(), base: m.base, size: m.size});
+                return Ok((m.name.to_owned(), addr - m.base as usize));
             }
         }
         Err(())
+    }
+
+    pub fn query_module_info_by_module_name(&self, name: &str)->Result<(usize, usize),()> {
+        if let Some(r) = self.modules_by_name.get(name) {
+            Ok((r.base as usize, r.size as usize))
+        } else {
+            Err(())
+        }
     }
 }
 #[test]
