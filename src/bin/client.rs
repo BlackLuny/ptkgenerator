@@ -28,7 +28,6 @@ static mut PID: usize = 0;
 
 static mut G_STOP: bool = false;
 
-
 struct ProcessorData {
     tx: (Option<mpsc::Sender<Vec<u8>>>, Option<JoinHandle<()>>), // sernder for process data
     data: HashMap<usize, [InsInfo; 4096]>,                       // processor collected data

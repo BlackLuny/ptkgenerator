@@ -9,10 +9,16 @@ edition = "2018"
 clap = "2.33.3"
 winapi = { version = "0.3", features = ["winnls", "stringapiset", "handleapi", "winioctl", "ioapiset", "tlhelp32", "impl-default", "psapi"] }
 sysinfo = "0.18.0"
-tokio = {version = "1.6.0", features = ["rt", "rt-multi-thread", "fs", "sync", "io-util", "time"]}
+tokio = {version = "1.6.0", features = ["rt", "rt-multi-thread", "fs", "sync", "io-util", "time", "net"]}
 libipt = "0.1.4"
 crossbeam = "0.8.0"
 ctrlc = "3.1.9"
 serde_json = "1.0.64"
-serde = "1.0.126"
+serde = {version = "1.0.126", features = ["derive"]}
 libloading = "0.7"
+bytes = "1.0.1"
+lazy_static = "1.4.0"
+postcard = {version = "0.7.0", features = ["use-std"]}
+tokio-util = {version = "0.6.7", features = ["codec"]}
+state = "0.4.2"
+futures = {version =  "0.3.15"}
