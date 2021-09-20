@@ -18,6 +18,13 @@ impl MemCacher {
         }
     }
 
+    pub fn clear_data(&mut self) {
+        self.last_page = 0;
+        self.last_content = 0;
+        self.f = None;
+        self.cache_lst.clear();
+    }
+
     fn get_content_in_cache_item(&self, content: &[u8; 4096], addr: u64, rst: &mut [u8]) -> usize {
         let begin = (addr & 0xfff) as usize;
         let end = begin + rst.len();

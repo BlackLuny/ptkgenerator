@@ -1,9 +1,9 @@
-use tokio::{net::{TcpListener, TcpStream}, runtime::Runtime, sync::mpsc::Sender};
+use tokio::{io::AsyncReadExt, net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf, ReadHalf}}, runtime::Runtime, sync::mpsc::Sender, task::JoinHandle};
 use crossbeam::channel::{self, Receiver};
-use std::{fmt::Write, io::{self, Read}};
+use std::{fmt::Write, io::{self, Read}, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
-use futures::{SinkExt, StreamExt, io::{AsyncReadExt, AsyncWriteExt}};
+use futures::{SinkExt, StreamExt, io::{AsyncWriteExt}};
 use bytes::{BytesMut, Bytes};
 
 pub trait MsgAdapter {
@@ -17,94 +17,174 @@ enum ConnectCtrlMsg {
     FetchData(),
     DisConnect(),
 }
-pub struct Communator<D: MsgAdapter> {
-    ctrl_tx: Option<Sender<(ConnectCtrlMsg, Option<tokio::sync::oneshot::Sender<bool>>)>>,
-    msg_rx: Receiver<Bytes>,
+pub struct CommunatorSender<D: MsgAdapter> {
+    //frame_writer: FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>,
+    tx: tokio::sync::mpsc::Sender<(Bytes, Option<tokio::sync::oneshot::Sender<io::Result<()>>>)>,
+    h: Option<JoinHandle<()>>, 
     adapter: D,
-    handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl<D: MsgAdapter> Communator<D> {
-    pub async fn wait_stop(&mut self) {
-        drop(self.ctrl_tx.take());
-        self.handle.take().unwrap().await.unwrap();
-    }
-    pub fn new(mut socket: TcpStream, adapter: D)->Communator<D> {
-        let (mut task_tx, mut task_rx) = tokio::sync::mpsc::channel::<(ConnectCtrlMsg, Option<tokio::sync::oneshot::Sender<bool>>)>(1);
-        let (reply_tx, reply_rx) = channel::unbounded::<Bytes>();
-        let replay_tx_clone = reply_tx.clone();
-        // new client
-        let handle = tokio::spawn(async move {
-            let (mut recv_s, mut send_s) = socket.split();
-            let mut frame_reader = FramedRead::new(recv_s, LengthDelimitedCodec::new());
-            let mut frame_writer = FramedWrite::new(send_s, LengthDelimitedCodec::new());
-            while let Some((task, oh)) = task_rx.recv().await {
-                //replay_tx_clone.send(xxx)
-                match task {
-                    ConnectCtrlMsg::SendData(data) => {
-                        frame_writer.send(data).await.unwrap();
-                    },
-                    ConnectCtrlMsg::FetchData() => {
-                        if let Some(r) = frame_reader.next().await {
-                            if let Ok(r) = r {
-                                replay_tx_clone.send(r.freeze()).unwrap();
-                            }
-                        }
-                    },
-                    ConnectCtrlMsg::DisConnect() => {
-                        unimplemented!();
-                    }
-                }
+impl<D: MsgAdapter> CommunatorSender<D> {
+    pub fn new(mut framer: FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>, adapter: D)->Self {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(Bytes, Option<tokio::sync::oneshot::Sender<io::Result<()>>>)>(10);
+        let h = tokio::spawn(async move {
+            while let Some((data, oh) )= rx.recv().await {
+                let r = if framer.send(data).await.is_err() {
+                    Err(io::Error::new(io::ErrorKind::Other, "Send data failed"))
+                } else {
+                    Ok(())
+                };
                 if let Some(oh) = oh {
-                    oh.send(true);
+                    oh.send(r).unwrap();
                 }
             }
         });
-        Communator {ctrl_tx: Some(task_tx), adapter: adapter, msg_rx: reply_rx, handle: Some(handle)}
+        CommunatorSender{tx: tx, h: Some(h), adapter: adapter}
+    }
+    pub async fn send_data(&self, data: D::DataType)->io::Result<()> {
+        let r = if let Ok(data) = self.adapter.encode(&data) {
+            let (tx, rx) = tokio::sync::oneshot::channel::<io::Result<()>>();
+            let r = self.tx.send((data.freeze(), Some(tx))).await;
+            if r.is_ok() {
+                match rx.await {
+                    Ok(v) => {
+                        match v {
+                            Ok(_) => {
+                                Ok(())
+                            },
+                            Err(e) => {
+                                Err(io::Error::new(io::ErrorKind::Other, "oh error"))
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        Err(io::Error::new(io::ErrorKind::Other, "send error"))
+                    }
+                }
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "send error"))
+            }
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "encode error"))
+        };
+        r
     }
 
-    pub async fn send_data(&self, data: &D::DataType)->io::Result<()> {
-        if let Ok(data) = self.adapter.encode(data) {
-            let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-            if self.ctrl_tx.as_ref().unwrap().send((ConnectCtrlMsg::SendData(data.freeze()), Some(tx))).await.is_err() {
-                Err(io::Error::new(io::ErrorKind::Other, "Send data failed"))
-            } else {
-                match rx.await {
-                    Ok(_) => {
-                        Ok(())
+
+}
+
+pub struct CommunatorReceiver<D: MsgAdapter> {
+    frame_reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
+    adapter: D
+}
+
+// 接收数据必须要
+impl<D: MsgAdapter> CommunatorReceiver<D> {
+    pub fn new(framer: FramedRead<OwnedReadHalf, LengthDelimitedCodec>, adapter: D)->Self {
+        CommunatorReceiver{frame_reader: framer, adapter: adapter}
+    }
+
+    pub async fn recv_data(&mut self)->io::Result<D::DataType> {
+        let read_rst = self.frame_reader.next().await;
+        match read_rst {
+            Some(s) => {
+                match s {
+                    Ok(r) => {
+                        match self.adapter.decode(&r.freeze()) {
+                            Ok(r) => {
+                                Ok(r)
+                            },
+                            Err(_) => {
+                                Err(io::Error::new(io::ErrorKind::Other, "decode error"))
+                            }
+                        }
                     },
                     Err(e) => {
                         Err(io::Error::new(io::ErrorKind::Other, e))
                     }
                 }
+            },
+            None => {
+                Err(io::Error::new(io::ErrorKind::Other, "recv None"))
+            }
+        }
+    }
+}
+pub struct Communator<D: MsgAdapter> {
+    //ctrl_tx: Option<Sender<(ConnectCtrlMsg, Option<tokio::sync::oneshot::Sender<bool>>)>>,
+    //msg_rx: Receiver<Bytes>,
+    frame_reader: FramedRead<OwnedReadHalf, LengthDelimitedCodec>,
+    frame_writer: FramedWrite<OwnedWriteHalf, LengthDelimitedCodec>,
+    adapter: D,
+    //handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl<D: MsgAdapter + Clone> Communator<D> {
+    pub async fn wait_stop(&mut self) {
+        // drop(self.ctrl_tx.take());
+        // self.handle.take().unwrap().await.unwrap();
+    }
+    pub fn split(self)->(CommunatorSender<D>, CommunatorReceiver<D>) {
+        (CommunatorSender::new(self.frame_writer, self.adapter.clone()), CommunatorReceiver::new(self.frame_reader, self.adapter.clone()))
+    }
+    pub fn new(mut socket: TcpStream, adapter: D)->Communator<D> {
+        let (mut task_tx, mut task_rx) = tokio::sync::mpsc::channel::<(ConnectCtrlMsg, Option<tokio::sync::oneshot::Sender<bool>>)>(1);
+        let (reply_tx, reply_rx) = channel::unbounded::<Bytes>();
+        let replay_tx_clone = reply_tx.clone();
+
+        let (mut recv_s, mut send_s) = socket.into_split ();
+        let mut frame_reader = FramedRead::new(recv_s, LengthDelimitedCodec::new());
+        let mut frame_writer = FramedWrite::new(send_s, LengthDelimitedCodec::new());
+
+        // new client
+        // let handle = tokio::spawn(async move {
+
+        //     while let Some((task, oh)) = task_rx.recv().await {
+        //         //replay_tx_clone.send(xxx)
+        //         match task {
+        //             ConnectCtrlMsg::SendData(data) => {
+        //                 frame_writer.send(data).await.unwrap();
+        //             },
+        //             ConnectCtrlMsg::FetchData() => {
+        //                 if let Some(r) = frame_reader.next().await {
+        //                     if let Ok(r) = r {
+        //                         replay_tx_clone.send(r.freeze()).unwrap();
+        //                     }
+        //                 }
+        //             },
+        //             ConnectCtrlMsg::DisConnect() => {
+        //                 unimplemented!();
+        //             }
+        //         }
+        //         if let Some(oh) = oh {
+        //             oh.send(true);
+        //         }
+        //     }
+        // });
+        Communator {adapter: adapter, frame_reader: frame_reader, frame_writer:frame_writer}
+    }
+
+    pub async fn send_data(&mut self, data: &D::DataType)->io::Result<()> {
+        if let Ok(data) = self.adapter.encode(data) {
+            if self.frame_writer.send(data.freeze()).await.is_err() {
+                Err(io::Error::new(io::ErrorKind::Other, "Send data failed"))
+            } else {
+                Ok(())
             }
         } else {
             Err(io::Error::new(io::ErrorKind::Other, "encode error"))
         }
     }
 
-    pub async fn recv_data(&self)->io::Result<D::DataType> {
-        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-        if self.ctrl_tx.as_ref().unwrap().send((ConnectCtrlMsg::FetchData(), Some(tx))).await.is_err() {
-            Err(io::Error::new(io::ErrorKind::Other, "Send data failed"))
-        } else {
-            match rx.await {
-                Ok(_) => {
-                    if let Ok(d) = self.msg_rx.recv() {
-                        if let Ok(data) = self.adapter.decode(&d) {
-                            Ok(data)
-                        } else {
-                            Err(io::Error::new(io::ErrorKind::Other, "decode error"))
-                        }
-                    } else {
-                        Err(io::Error::new(io::ErrorKind::Other, "recv channel failed"))
-                    }
-                },
-                Err(e) => {
-                    Err(io::Error::new(io::ErrorKind::Other, e))
+    pub async fn recv_data(&mut self)->io::Result<D::DataType> {
+        if let Some(s) = self.frame_reader.next().await {
+            if let Ok(r) = s {
+                if let Ok(r) = self.adapter.decode(&r.freeze()) {
+                    return Ok(r);
                 }
             }
         }
+        Err(io::Error::new(io::ErrorKind::Other, "recv error"))
     }
 }
 
@@ -115,6 +195,7 @@ fn test_communator() {
     struct SimpleMsg {
         data:String,
     }
+    #[derive(Clone)]
     struct SimpleAdapter {}
     impl MsgAdapter for SimpleAdapter {
         type DataType = SimpleMsg;

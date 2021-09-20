@@ -1,8 +1,9 @@
 use std::{collections::HashMap, sync::mpsc};
 use libipt::insn::Insn;
 use std::thread;
+use serde::{Serialize, Deserialize};
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InsInfo {
     pub exec_cnt: usize,
 }

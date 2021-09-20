@@ -5,6 +5,7 @@ use ptkgenerator::decode_proc::decode;
 use ptkgenerator::mem_cacher::MemCacher;
 use ptkgenerator::post_proc::*;
 use ptkgenerator::pt_ctrl::*;
+use ptkgenerator::server_consumer::client_proc::ServerAgent;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::mpsc;
@@ -299,21 +300,20 @@ fn collect_all_data() {
 }
 
 fn main() {
-    ctrlc::set_handler(move || {
-        println!("Stop collection……");
-        unsafe {
-            G_STOP = true;
-        };
-    })
-    .expect("Error setting Ctrl-C handler");
+    // ctrlc::set_handler(move || {
+    //     println!("Stop collection……");
+    //     unsafe {
+    //         G_STOP = true;
+    //     };
+    // })
+    // .expect("Error setting Ctrl-C handler");
 
-    let handle = get_pt_handle("\\\\.\\PtCollector").expect("Open pt driver failed");
-    let matches = App::new("PtkGenerator")
+    let matches = App::new("Pt Decoder Client")
         .version("1.0")
         .author("luny")
         .arg(
-            Arg::with_name("process")
-                .short("p")
+            Arg::with_name("addr")
+                .short("a")
                 .takes_value(true)
                 .required(true),
         )
@@ -347,48 +347,12 @@ fn main() {
                 .default_value("1GB"),
         )
         .get_matches();
+    let addr = matches.value_of("addr").unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_time().enable_io().build().unwrap();
+    rt.block_on(async {
+        let server_agent = ServerAgent::connect(addr).await;
+        server_agent.h.unwrap().await.unwrap()
+    });
 
-    let proc_name = matches.value_of("process").unwrap();
-    let buff_size = matches.value_of("buff_size").unwrap().parse().unwrap();
-    let mtc = matches.value_of("mtc_freq").unwrap().parse().unwrap();
-    let psb = matches.value_of("psb_freq").unwrap().parse().unwrap();
-    let cyc = matches.value_of("cyc_thld").unwrap().parse().unwrap();
-    let addr0_cfg = matches.value_of("addr0_cfg").unwrap().parse().unwrap();
-    let addr0_start = u32::from_str_radix(matches.value_of("addr0_start").unwrap(), 16).unwrap();
-    let addr0_end = u32::from_str_radix(matches.value_of("addr0_end").unwrap(), 16).unwrap();
-    let out_dir = matches.value_of("out_dir").unwrap();
-    let file_size = matches.value_of("file_size").unwrap();
-
-    println!("process {}", proc_name);
-    let p = get_process_id(proc_name).unwrap();
-
-    create_env(
-        out_dir,
-        file_size,
-        handle as usize,
-        p,
-        channel::unbounded::<Vec<u8>>(),
-    );
-
-    setup_host_pid(handle, get_current_pid().unwrap() as u32).expect("Set Host Pid Failed");
-
-    println!("start capturing ...");
-    setup_pt_no_pmi(
-        handle,
-        p as u32,
-        buff_size,
-        mtc,
-        psb,
-        cyc,
-        addr0_cfg,
-        addr0_start,
-        addr0_end,
-        &mut processor,
-    )
-    .expect("Start pt failed");
-
-    // post proc here
-    wait_for_complete();
-    collect_all_data();
-    close_pt_handle(handle).expect("Close pt handle errord");
+    loop {}
 }

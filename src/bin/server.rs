@@ -5,6 +5,7 @@ use ptkgenerator::decode_proc::decode;
 use ptkgenerator::mem_cacher::MemCacher;
 use ptkgenerator::post_proc::*;
 use ptkgenerator::pt_ctrl::*;
+use ptkgenerator::server_consumer::client_pool::ClientPool;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::mpsc;
@@ -41,17 +42,57 @@ fn create_worker_thread(
 ) -> JoinHandle<()> {
     let h = thread::spawn(move || {
         let mut cacher = MemCacher::new();
-        while let Ok(mut d) = rx.recv() {
-            let _ = decode(
-                unsafe { DEV_HANDLE },
-                unsafe { PID },
-                &mut d,
-                &mut cacher,
-                data,
-            );
-        }
+        // while let Ok(mut d) = rx.recv() {
+        //     let _ = decode(
+        //         unsafe { DEV_HANDLE },
+        //         unsafe { PID },
+        //         &mut d,
+        //         &mut cacher,
+        //         data,
+        //     );
+        // }
     });
     h
+}
+
+use std::net::UdpSocket;
+
+pub fn get_ip_addr() -> Option<String> {
+    let socket = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+
+    match socket.connect("8.8.8.8:80") {
+        Ok(()) => (),
+        Err(_) => return None,
+    };
+
+    match socket.local_addr() {
+        Ok(addr) => return Some(addr.ip().to_string()),
+        Err(_) => return None,
+    };
+}
+
+fn create_client_pool_thread(
+    rx: channel::Receiver<Vec<u8>>
+) {
+    unsafe {
+            if let Some(rt) = &RT {
+                let h = rt.spawn(async move  {
+                    if let Some(ip) = get_ip_addr() {
+                        println!("ip addr: {} port: 6010", ip);
+                        let mut client_pool = ClientPool::start_server(&format!("{}:6010", ip), unsafe { PID }, unsafe { DEV_HANDLE }).await;
+                        while let Ok(d) = rx.recv() {
+                            client_pool.decode(d).await;
+                        }
+                    } else {
+                        println!("get ip error");
+                    }
+                });
+            }   
+        }
+    //h
 }
 
 fn create_spliter_thread(
@@ -162,6 +203,8 @@ fn create_env(
             }
         };
     }
+
+    create_client_pool_thread(rx.clone());
 
     set_file_size(file_size);
 

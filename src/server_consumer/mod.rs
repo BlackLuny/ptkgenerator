@@ -4,3 +4,5 @@ pub mod communator;
 
 pub mod client_agent;
 pub mod interface;
+
+pub mod client_proc;
